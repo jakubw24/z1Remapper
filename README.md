@@ -113,4 +113,4 @@ See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the observed USB IDs, read/write 
 
 ## License
 
-No explicit software license has been selected for this repository. Before publishing for reuse or accepting contributions, choose and add an appropriate `LICENSE` file (for example, via GitHub's license picker).
+This is indeed AI Slop.
