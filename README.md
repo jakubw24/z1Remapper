@@ -13,12 +13,6 @@ A small, **Windows PowerShell 5.1** utility to change key assignments stored on 
 5. Saves a complete 384-byte before/after backup, shows the proposed change, and requires you to type `WRITE` before it sends anything that modifies the keypad.
 6. Writes the full configuration to the keypad, then checks the active mapping by reading it back twice. An optional reconnect test checks persistence.
 
-### v3 change: no stray input in the next prompt
-
-The earlier console version observed key-down events through Windows Raw Input, but the same keypress could remain queued in PowerShell's console buffer and appear in the following `Read-Host` prompt. This version **waits for the captured key to be released**, then **flushes queued console key events** before proceeding. It does not install a keyboard hook or suppress input system-wide.
-
-**This input-buffer fix is new and has not yet been hardware-tested.** The earlier v2 read/write flow was reported working on the Z1.
-
 ## Requirements
 
 - Windows 10/11 with **Windows PowerShell 5.1** (`powershell.exe`)
