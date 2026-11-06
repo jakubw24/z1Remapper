@@ -1,0 +1,16 @@
+# Personal configuration dumps and backups
+*.bin
+GameSirZ1-Backups/
+GameSirZ1-Keymap-*/
+Change-*/
+keymap-*.csv
+keymap-*.txt
+metadata.json
+
+# Temporary PowerShell and editor output
+*.log
+*.tmp
+*.bak
+.vscode/
+.idea/
+.DS_Store
