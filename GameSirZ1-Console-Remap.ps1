@@ -1,13 +1,16 @@
-# GameSir Z1: interactive, hardware-persistent key rebinding for Windows PowerShell 5.1.
+﻿# GameSir Z1: interactive, hardware-persistent key rebinding for Windows PowerShell 5.1.
 # Uses Windows Raw Input to distinguish Z1 from a second keyboard.
 # Waits for release and flushes the console buffer to prevent input leaking into prompts.
 # Requires no Python, device-driver installation, or background remapper.
-# Source key must have an ordinary, unique (or disambiguated) HID assignment.
-# Unknown/vendor-defined records are never modified. Writes full 384-byte image.
+# Source key must have a recognised output (or a previously observed G-key default).
+# G1-G4 were independently remapped successfully on the tested Z1 (records 0-3).
+# The full 384-byte write transaction and double readback are unchanged.
 # Before write: two identical live reads + saved backup. After write: two readbacks.
 # No automatic write retries or rollbacks.
 param(
     [switch]$PreviewOnly,
+    [switch]$DiagnoseGKeys,
+    [switch]$EnableExperimentalGKeys, # Accepted for backwards compatibility; no longer required.
     [string]$BackupDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -595,6 +598,7 @@ function Convert-KeyEvent($ev) {
 # These correspond to verified ordinary-key records in the original Z1 image.
 # They are factory *labels*, useful when two records now send the same key.
 $factoryLabels=@{
+    0='G1';1='G2';2='G3';3='G4'
     4='Space'; 6='Esc';7='1';8='2';9='3';10='4';11='5';12='Tab'
     13='Q';14='W';15='E';16='R';17='T';18='Equals'
     19='A';20='S';21='D';22='F';23='G';24='LeftShift'
@@ -609,14 +613,39 @@ function Is-EditableRecord([byte[]]$image,[int]$record) {
     $isModifier=($image[$at+2] -eq 0 -and $image[$at+1] -in @(1,2,4,8,16,32,64,128))
     return ($isKey -or $isModifier)
 }
+# G1-G4 -> records 0-3 were all physically tested by successfully remapping
+# their factory special slots to ordinary keyboard assignments on one Z1.
+# The original D0 A2 semantics remain unknown; preserve other configuration bytes.
+$gDefaultOutput=@{
+    0=[byte[]]@(0x20,0x00,0x25) # G1 default: 8
+    1=[byte[]]@(0x20,0x00,0x26) # G2 default: 9
+    2=[byte[]]@(0x20,0x00,0x4B) # G3 default: PageUp
+    3=[byte[]]@(0x20,0x00,0x4E) # G4 default: PageDown
+}
+function Is-FactoryGRecord([byte[]]$image,[int]$n) {
+    if($n -lt 0 -or $n -gt 3) {return $false}
+    $i=$n*3
+    return ($image[$i] -eq 0xD0 -and $image[$i+1] -eq 0xA2 -and $image[$i+2] -eq ($n+1))
+}
 function Find-MatchingRecords([byte[]]$image,[byte[]]$keyBytes) {
     $results=@()
-    foreach($n in ($factoryLabels.Keys | Sort-Object)) {
-        $n=[int]$n
-        if(-not (Is-EditableRecord $image $n)){continue}
-        $at=3*$n
-        if($image[$at] -eq $keyBytes[0] -and $image[$at+1] -eq $keyBytes[1] -and $image[$at+2] -eq $keyBytes[2]) {
-            $results+= $n
+    foreach($entry in ($factoryLabels.Keys | Sort-Object)) {
+        [int]$n=$entry
+        $i=$n*3
+        # A G-button that has already been changed is stored as an ordinary 20 xx xx record.
+        # Include it in duplicate-output matching along with other keypad switches.
+        if(Is-EditableRecord $image $n) {
+            if($image[$i] -eq $keyBytes[0] -and $image[$i+1] -eq $keyBytes[1] -and $image[$i+2] -eq $keyBytes[2]) {
+                $results+= $n
+            }
+            continue
+        }
+        # An unchanged special G record does not contain its effective key output.
+        # Use only the device-specific, previously OBSERVED default output as a candidate.
+        if($n -ge 0 -and $n -le 3 -and (Is-FactoryGRecord $image $n)) {
+            if((Compare-Bytes $gDefaultOutput[$n] $keyBytes) -eq -1) {
+                $results+= $n
+            }
         }
     }
     return $results
@@ -638,6 +667,9 @@ function Capture-KnownKey([bool]$fromZ1) {
 Write-Host ''
 Write-Host 'GameSir Z1 - direct onboard key remapping' -ForegroundColor Cyan
 Write-Host 'Press a Z1 key, then a key on your main keyboard. No G-Core required.'
+Write-Host 'G1-G4 remapping has been hardware-confirmed on the tested Z1.'
+if($EnableExperimentalGKeys) { Write-Host 'Note: -EnableExperimentalGKeys is obsolete; all four G keys use the normal workflow.' }
+Write-Host 'For G-button input diagnostics, use -DiagnoseGKeys (read-only).'
 Write-Host 'This version reads the actual active keymap with opcode 0x08.'
 Write-Host 'Ctrl+C cancels before writing. Keep a second keyboard connected.'
 Write-Host ''
@@ -661,6 +693,72 @@ Write-Host ('ACTIVE (0x08) SHA256: '+(Get-SHA $initial)) -ForegroundColor Green
 Write-Host ('Physical Q (record 13): reference {0}; active {1}' -f (Hex3 ([byte[]]@($reference[39],$reference[40],$reference[41]))),(Hex3 ([byte[]]@($initial[39],$initial[40],$initial[41]))))
 Write-Host ('Physical W (record 14): reference {0}; active {1}' -f (Hex3 ([byte[]]@($reference[42],$reference[43],$reference[44]))),(Hex3 ([byte[]]@($initial[42],$initial[43],$initial[44]))))
 
+# Diagnostic mode: the four white G1-G4 keys appear to use vendor/macro
+# mapping records. Capture observed Windows Raw Input for each without making
+# any assertions about which internal record controls that physical switch.
+# No 0x09 writes, session commands or changes to stored Z1 state.
+if ($DiagnoseGKeys) {
+    Write-Host ''
+    Write-Host 'G-KEY DIAGNOSTICS (READ-ONLY)' -ForegroundColor Cyan
+    Write-Host 'G1-G4 -> records 0-3 were independently verified by successful physical remaps.'
+    for ($i=0; $i -lt 4; $i++) {
+        $o=3*$i
+        [byte[]]$r=@($initial[$o],$initial[$o+1],$initial[$o+2])
+        Write-Host ('  Candidate special record {0} at 0x{1:X3}: {2}' -f $i,$o,(Hex3 $r))
+    }
+    $results=@()
+    foreach ($name in @('G1','G2','G3','G4')) {
+        Write-Host ''
+        Write-Host ('Tap and RELEASE physical {0} now (15 seconds).' -f $name) -ForegroundColor Yellow
+        $item=[ordered]@{
+            PhysicalKey=$name; Status=''; WindowsOutput=''; HidRecord='';
+            ScanCode=''; Flags=''; VirtualKey=''; EditableMatches=@();
+            CandidateSpecialSlot=([int]($name.Substring(1)) - 1)
+        }
+        try {
+            $ev=[Z1RawInputCaptureV3]::Capture($true,15)
+            Start-Sleep -Milliseconds 75
+            [Z1RawInputCaptureV3]::FlushConsoleKeys()
+            $item.ScanCode=('0x{0:X2}' -f $ev.ScanCode)
+            $item.Flags=('0x{0:X2}' -f $ev.Flags)
+            $item.VirtualKey=('0x{0:X2}' -f $ev.VirtualKey)
+            $decoded=Convert-KeyEvent $ev
+            if($null -eq $decoded) {
+                $item.Status='Unsupported Raw Input scan code'
+                Write-Warning ('{0}: raw scan {1}, flags {2}, VK {3}; no HID keycode translation' -f $name,$item.ScanCode,$item.Flags,$item.VirtualKey)
+            } else {
+                $item.Status='Captured'
+                $item.WindowsOutput=$decoded.Label
+                $item.HidRecord=(Hex3 $decoded.Bytes)
+                [int[]]$ord=@(Find-MatchingRecords $initial $decoded.Bytes)
+                $item.EditableMatches=@($ord)
+                Write-Host ('  {0}: Windows reports {1}, HID {2}; raw scan={3}, flags={4}, VK={5}' -f $name,$item.WindowsOutput,$item.HidRecord,$item.ScanCode,$item.Flags,$item.VirtualKey) -ForegroundColor Green
+                if($ord.Count -eq 0) {
+                    Write-Host '  No match in the protected set of ordinary editable keymap records.' -ForegroundColor Yellow
+                } else {
+                    Write-Host ('  Matches ordinary records: '+($ord -join ', '))
+                    Write-Host '  A matching output alone does not prove which physical key/record was pressed.' -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            $item.Status=('Capture failed: '+$_.Exception.Message)
+            Write-Warning ('{0}: {1}' -f $name,$item.Status)
+        }
+        $results+= [pscustomobject]$item
+    }
+    $diagPath=Join-Path ([Environment]::GetFolderPath('MyDocuments')) ('GameSirZ1-GKey-Diagnostics-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'.json')
+    [ordered]@{
+        Device='GameSir Z1'; VidPid='0C45:7521'; TimestampUTC=[DateTime]::UtcNow.ToString('o');
+        ReferenceSHA256=(Get-SHA $reference); ActiveSHA256=(Get-SHA $initial);
+        SpecialRecordStatus='G1-G4 records 0-3 hardware-confirmed on this tested Z1';
+        Observations=$results
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $diagPath -Encoding UTF8
+    Write-Host ''
+    Write-Host ('Saved diagnostic: '+$diagPath) -ForegroundColor Cyan
+    Write-Host 'No Z1 configuration was written. Share the output or JSON to investigate G-key programming.'
+    exit 0
+}
+
 Write-Host ''
 Write-Host 'STEP 1: TAP AND RELEASE ONE key on the GameSir Z1.' -ForegroundColor Cyan
 Write-Host 'Listening for the Z1 only (30-second timeout)...'
@@ -668,14 +766,19 @@ $source=Capture-KnownKey $true
 Write-Host ('Z1 sent: '+$source.Label+'  ('+(Hex3 $source.Bytes)+')')
 [int[]]$matches=@(Find-MatchingRecords $initial $source.Bytes)
 if($matches.Count -eq 0) {
-    throw 'The Z1 key does not match a safely editable mapping record. Vendor-defined keys, macros and unsupported layers are protected.'
+    Write-Warning ('The Z1 reported {0} [{1}], but it does not match a known ordinary record or a measured G1-G4 output.' -f $source.Label,(Hex3 $source.Bytes))
+    Write-Host 'Unknown G-key macros or other special modes cannot be identified from a keypress alone.' -ForegroundColor Yellow
+    Write-Host 'Use -DiagnoseGKeys to inspect the output without changing the keypad.'
+    Write-Host 'No Z1 configuration was written.'
+    exit 0
 }
 [int]$record=$matches[0]
 if($matches.Count -gt 1) {
-    Write-Warning 'Several Z1 keys currently send this SAME value. Windows cannot distinguish their physical switches.'
+    Write-Warning 'Multiple physical Z1 switches could have sent this code. Windows cannot distinguish the switches.'
     Write-Host 'Choose the ORIGINAL physical key label from this list:'
     foreach($n in $matches) {
-        Write-Host ('  [{0}] Physical {1} key (currently sends {2})' -f $n,$factoryLabels[[int]$n],$source.Label)
+        $level = if(([int]$n) -ge 0 -and ([int]$n) -le 3) {' [G key]'} else {''}
+        Write-Host ('  [{0}] Physical {1} key (currently sends {2}){3}' -f $n,$factoryLabels[[int]$n],$source.Label,$level)
     }
     $choice=(Read-Host 'Enter the number for the PHYSICAL Z1 key you pressed').Trim()
     [int]$entered=-1
@@ -685,6 +788,9 @@ if($matches.Count -gt 1) {
     $record=$entered
 }
 Write-Host ('Selected Z1 record {0}, PHYSICAL {1}; current output {2}' -f $record,$factoryLabels[$record],$source.Label) -ForegroundColor Green
+if($record -ge 0 -and $record -le 3) {
+    Write-Host ('{0} -> record {1} was hardware-verified by successful remapping.' -f $factoryLabels[$record],$record) -ForegroundColor Green
+}
 
 Write-Host ''
 Write-Host 'STEP 2: TAP AND RELEASE the REPLACEMENT key on your normal PC keyboard.' -ForegroundColor Cyan
@@ -723,6 +829,7 @@ $runFolder=Join-Path $BackupDirectory ('Change-'+(Get-Date -Format 'yyyyMMdd-HHm
 $plan=[ordered]@{
     Device='GameSir Z1';VID='0C45';PID='7521';Record=$record;ActiveReadOpcode='0x08';ReferenceReadOpcode='0x07'
     FactoryLabel=$factoryLabels[$record];Source=$source.Label;Destination=$target.Label
+    PhysicalMappingEvidence=$(if($record -ge 0 -and $record -le 3){'G1-G4 slot mapping hardware verified on the tested Z1'}else{'factory ordinary record mapping'})
     OldBytes=(Hex3 $old3);NewBytes=(Hex3 $target.Bytes);ByteOffset=$at
     BeforeSHA256=(Get-SHA $initial);ProposedSHA256=(Get-SHA $proposed)
     TimestampUTC=[DateTime]::UtcNow.ToString('o')
@@ -734,8 +841,9 @@ if($PreviewOnly){
     exit 0
 }
 Write-Host 'The script will write the FULL configuration, not a single 3-byte record.' -ForegroundColor Yellow
-$confirm=Read-Host 'Type WRITE to program the Z1, or anything else to cancel'
-if($confirm -cne 'WRITE') { Write-Host 'Cancelled. No configuration writes.'; exit 0 }
+$confirmationToken = 'WRITE'
+$confirm=Read-Host ('Type '+$confirmationToken+' to program the Z1, or anything else to cancel')
+if($confirm -cne $confirmationToken) { Write-Host 'Cancelled. No configuration writes.'; exit 0 }
 
 # A fresh double read immediately before any modification: if another program
 # or key-layer changed the configuration, abort rather than overwrite it.

@@ -1,4 +1,4 @@
-# Personal configuration dumps and backups
+# Local hardware dumps, keymap backups and diagnostics
 *.bin
 GameSirZ1-Backups/
 GameSirZ1-Keymap-*/
@@ -7,7 +7,7 @@ keymap-*.csv
 keymap-*.txt
 metadata.json
 
-# Temporary PowerShell and editor output
+# Temporary files
 *.log
 *.tmp
 *.bak

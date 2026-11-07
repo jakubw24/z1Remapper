@@ -1,36 +1,34 @@
 # GameSir Z1 Console Remapper
 
-A small, **Windows PowerShell 5.1** utility to change key assignments stored on a **GameSir Z1** keypad. It communicates with the keypad directly over USB HID, so you do not need the discontinued GameSir G-Core software or a permanent keyboard-remapping driver.
+A small, **Windows PowerShell 5.1** utility to permanently change key assignments stored on a **GameSir Z1** gaming keypad. It communicates directly over USB HID, so there is no need for the discontinued GameSir G-Core software, Python, an installer, a permanent background process, or a keyboard interception driver.
 
-> **Community reverse-engineering project, not affiliated with GameSir.** Tested on one Z1 with USB ID `VID_0C45&PID_7521` and the original keymap identified below. Hardware writes can leave a device with broken key assignments if interrupted or if the firmware differs. Keep another keyboard connected.
+> **Independent reverse-engineering project, not affiliated with GameSir.** Hardware-tested on one Z1 with USB ID `VID_0C45&PID_7521` and the reference keymap identified below. A failed or interrupted configuration write can leave key assignments unusable. Keep a second keyboard connected.
 
 ## What it does
 
-1. Reads the keypad's factory/reference keymap (`0x07`) and current/active keymap (`0x08`).
-2. Waits for you to **tap and release** a key on the **Z1**.
-3. Waits for you to **tap and release** the replacement key on your **main keyboard**.
-4. If multiple Z1 keys currently send the same keycode, asks you to choose the intended physical key by its original label.
-5. Saves a complete 384-byte before/after backup, shows the proposed change, and requires you to type `WRITE` before it sends anything that modifies the keypad.
-6. Writes the full configuration to the keypad, then checks the active mapping by reading it back twice. An optional reconnect test checks persistence.
+1. Reads the Z1's reference (`0x07`) and **current active** (`0x08`) 384-byte keymaps.
+2. Asks you to **tap and release** the physical key on the **Z1** that you want to change, including **G1, G2, G3 and G4**.
+3. If several keys currently produce the same output, asks you to select the intended **physical** key rather than guessing.
+4. Asks you to **tap and release** the replacement key on your regular keyboard.
+5. Saves timestamped binary backups, displays the exact proposed edit, and requires a deliberate `WRITE` confirmation before changing hardware.
+6. Writes the full 384-byte configuration and verifies it by reading the active keymap back twice. It offers an optional reconnect/persistence check.
+
+The utility waits for each captured key to be **released** and clears pending **PowerShell console input** so captured keystrokes do not appear at the next prompt. It does **not** suppress keystrokes in other applications.
 
 ## Requirements
 
 - Windows 10/11 with **Windows PowerShell 5.1** (`powershell.exe`)
-- GameSir Z1 connected by USB in PC mode
-- A separate keyboard for entering the replacement key and for recovery
-- No Python, G-Core, installer, or extra HID drivers
+- A GameSir Z1 connected by USB in PC mode
+- A **second keyboard** for replacement-key capture and recovery
+- The tested Z1 reference keymap (see the compatibility guard below)
 
-This revision deliberately supports only the known factory layout whose `0x07` reference keymap has SHA-256:
-
-`ADF7946335EBF5648A7044A187291DE4F0FD92C76B5C0987119EE7C62E4DB381`
-
-The utility **refuses to write** if the connected Z1's reference image differs. Other Z1 firmware or board revisions have not been validated. Do not bypass that check without understanding the physical-key layout.
+No additional driver, Android app, Python installation or G-Core is required.
 
 ## Quick start
 
-Download or clone this repository. Open **Windows PowerShell** and run the script from its folder.
+Download or clone this repository, open Windows PowerShell in its directory and run:
 
-**Preview (recommended first):**
+**Preview without writing:**
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\GameSirZ1-Console-Remap.ps1" -PreviewOnly
@@ -42,18 +40,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\GameSirZ1-Console-Rem
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\GameSirZ1-Console-Remap.ps1"
 ```
 
-At the prompts:
+Tap and release the Z1 key, select a physical-key label only if prompted, then tap and release the replacement key on your **main keyboard**. Check the proposed record and type `WRITE` to save, or anything else to cancel.
 
-- **Tap and release** the Z1 key you want to change.
-- If it has an identical assignment to another Z1 key, choose its **original physical label** from the list shown.
-- **Tap and release** the target key on your normal keyboard.
-- Review the proposed changes and type **`WRITE`** to program the Z1, or anything else to cancel.
+You can also capture G-button diagnostic output **without writing**:
 
-Do not hold a key down while waiting for the next prompt. Avoid typing ahead of a prompt; the utility intentionally clears pending console input during capture.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\GameSirZ1-Console-Remap.ps1" -DiagnoseGKeys
+```
 
-## Example: Q and W both send W
+The older `-EnableExperimentalGKeys` option is still accepted for compatibility, but **is no longer needed**. G1–G4 all use the normal `WRITE` confirmation.
 
-If the physical **Q** key has already been remapped to **W**, both physical Q and physical W produce the same keyboard event. Windows Raw Input identifies the **device**, not which switch inside it produced the code. The utility therefore prompts you to choose:
+## G1–G4: physically tested
+
+All four G-buttons have now been remapped successfully on the tested Z1. Their physical keys correspond to the first four 3-byte records in the keymap:
+
+| Physical button | Factory special record | Record index | Observed factory output | Verification |
+| --- | --- | ---: | --- | --- |
+| **G1** | `D0 A2 01` | `0` | `8` (`20 00 25`) | Remapped to **F6**, later **Left Windows** |
+| **G2** | `D0 A2 02` | `1` | `9` (`20 00 26`) | User confirmed successful physical remapping |
+| **G3** | `D0 A2 03` | `2` | **PageUp** (`20 00 4B`) | User confirmed successful physical remapping |
+| **G4** | `D0 A2 04` | `3` | **PageDown** (`20 00 4E`) | Remapped to **M** in the experiment; all four subsequently reported working |
+
+**PageUp/PageDown are not Up/Down arrows.** USB HID usages for Up and Down are `0x52` and `0x51`. The special `D0 A2 xx` records can be replaced with ordinary keyboard records for the tested device. Their *original vendor-defined semantics* are still unknown; assigning a key such as `8` is not equivalent to restoring a factory `D0 A2` special record.
+
+For a factory-special G record still present in the active map, selection uses the **previously observed default Windows output**. Once remapped, it uses that G-button's ordinary stored assignment. If a key instead sends an unsupported macro or other non-keyboard sequence, the utility may refuse to select it rather than risk editing the wrong record.
+
+## Duplicate assignments
+
+If physical Q is remapped to W, pressing either Q or W sends the same event. Windows Raw Input identifies which **keyboard device** produced it, not the particular switch inside that keyboard. The utility therefore asks which original physical key you pressed:
 
 ```text
 Z1 sent: W
@@ -63,48 +77,52 @@ Several Z1 keys currently send this SAME value.
 Enter the number for the PHYSICAL Z1 key you pressed:
 ```
 
-To change physical Q, enter `13`. Neither the original record number nor a duplicate keyboard output should be used to guess automatically.
+Only the selected record changes.
 
 ## Backups and safety
 
-Before writing, the utility creates a timestamped folder in:
+Before any hardware modification, the utility saves a timestamped folder under:
 
 `Documents\GameSirZ1-Backups\Change-YYYYMMDD-HHMMSS-mmm\`
-
-The folder includes:
 
 | File | Contents |
 | --- | --- |
 | `before.bin` | Active 384-byte keymap before editing |
 | `proposed.bin` | Proposed 384-byte keymap |
-| `change.json` | Record number, old/new bytes, checksums |
-| `immediate-before.bin` | Live backup immediately before the write |
-| `after.bin` | Post-write readback, if successful |
+| `change.json` | Record number, before/after bytes, SHA-256 hashes |
+| `immediate-before.bin` | Fresh live backup immediately before a confirmed write |
+| `after.bin` | Post-write readback if available |
 
-The script makes **two identical live reads** before applying a change, writes all seven blocks, and performs **two readbacks** afterward. It never automatically retries a failed write or rolls back a partial write. **The included script does not provide a one-click restore command.** Preserve your backups privately, and do not publish them in your repository.
+**Important safeguards:** the script reads the active image twice initially and again immediately before the write; changes **at most one known 3-byte record**; writes the full image as seven chunks; and checks the active image twice after writing. It does **not** automatically retry or roll back unsuccessful writes. **There is no general-purpose restore command.** Preserve backups privately and do not upload them to GitHub.
 
-If a write fails, **stop** and save the output and backups. Do not keep applying the same write blindly.
+The tested reference-image SHA-256 (`0x07`) is:
+
+`ADF7946335EBF5648A7044A187291DE4F0FD92C76B5C0987119EE7C62E4DB381`
+
+The utility refuses to operate if the connected Z1's reference image differs. This protects against unknown layouts but also means other Z1 firmware/board versions are **not yet supported**.
+
+If a write fails, **stop and retain the logs and backups**. Do not blindly rerun the write. A USB reconnect does not guarantee recovery from a damaged onboard configuration.
 
 ## Limitations
 
-- Tested with **one Z1 USB firmware/hardware configuration**, not all variants.
-- Only a known set of ordinary keyboard and modifier mapping records can be edited. Vendor-defined functions, macros, unknown records, and RGB settings are intentionally protected.
-- Some non-US layouts and unusual keyboard keys may not map as their printed legends suggest; the tool uses physical scan codes.
-- Duplicate assignments require explicit physical-key disambiguation.
-- This script cannot detect the physical switch location independently of the keycode sent by the Z1.
-- Changing a mapping is **not** the same as firmware updating; firmware flashing is neither needed nor supported.
-- Windows Raw Input still allows normal key events to reach other applications; the console-buffer cleanup only prevents captured keypresses from being consumed by subsequent **PowerShell prompts**.
+- Tested on **one Z1 configuration**, not every firmware revision or game mode.
+- Ordinary keys and **G1–G4** have been physically remapped on the tested unit; original vendor-defined G-function encoding is not understood.
+- Macros, RGB functions, mouse actions, unsupported layers and complex multi-key output are **not** editable through this console utility.
+- Keyboard scan-code translation may not match printed legends on non-US layouts or unusual keyboards.
+- If a key produces an unsupported output, the tool refuses to guess the physical record.
+- Windows Raw Input does not prevent the same key event reaching other applications.
+- The full-image write has device-level risk even with checks and backups; restoration is not guaranteed.
 
-## Protocol overview
+## Protocol and source files
 
-See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the observed USB IDs, read/write commands, report format, and confirmed versus inferred behavior.
+- [`GameSirZ1-Console-Remap.ps1`](GameSirZ1-Console-Remap.ps1) — complete single-file application, including Win32 HID and Raw Input interop compiled at runtime via PowerShell `Add-Type`.
+- [`PROTOCOL.md`](PROTOCOL.md) — observed packet format, keymap structure, command usage and G1–G4 experiments.
+- [`.gitignore`](.gitignore) — exclusions for private keymap dumps, backups and temporary files.
 
-## Files
-
-- `GameSirZ1-Console-Remap.ps1` — complete source code, including native HID transport and Raw Input capture implemented using C# compiled in memory by PowerShell's `Add-Type`.
-- `docs/PROTOCOL.md` — reverse-engineering notes and safety limitations.
-- `.gitignore` — prevents common private backup and binary files from being accidentally committed.
+The earlier repository also contained a file named `download` holding ignore-pattern text. It was **not** a real `.gitignore`; this update includes the correctly named file. You may delete the old `download` file from GitHub after uploading this release.
 
 ## License
 
-This is indeed AI Slop.
+No open-source license has been selected or included. Add a `LICENSE` file if you intend to grant explicit rights to reuse, modify and redistribute this work.
+
+*Original README note: “This is indeed AI Slop.”*
